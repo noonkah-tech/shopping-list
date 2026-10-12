@@ -1,20 +1,19 @@
 'use strict';
 /* System of record: three JSON objects (stores, items, trips) + ui prefs, each in localStorage. */
-const DATA_VERSION=2,K={v:'shop.version',stores:'shop.stores',items:'shop.items',trips:'shop.trips',ui:'shop.ui'};
+const DATA_VERSION=3,K={v:'shop.version',stores:'shop.stores',items:'shop.items',trips:'shop.trips',ui:'shop.ui'};
 const $=s=>document.querySelector(s),uid=()=>Math.random().toString(36).slice(2,10),today=()=>{const d=new Date();return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0')};
 const esc=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const norm=s=>String(s).trim().toLowerCase().replace(/\s+/g,' ');
 /* ---------- seed ---------- */
 function seed(){
- const SID='costco-desert-color',sec=['Produce','Bakery','Drinks','Freezer','Dry goods'],sid=n=>n.toLowerCase().replace(/\s+/g,'-');
+ const SID='costco-desert-color',sec=['Produce','Bakery','Open air coolers','Drinks','Freezer','Dry goods'],sid=n=>n.toLowerCase().replace(/\s+/g,'-');
  const stores=[{id:SID,name:'South St. George Costco (Desert Color)',sections:sec.map(n=>({id:sid(n),name:n}))}];
  // [name, section, aliases]
  const CAT=[['Apples','Produce'],['Bananas','Produce'],['Berries','Produce'],['Grapes','Produce'],['Salad pack','Produce',['salad']],['Caesar salad packs','Produce'],['Peaches','Produce'],['Pineapple','Produce'],['Mandarin oranges','Produce'],
  ['Sourdough pizza crust','Bakery'],['Chocolate muffins','Bakery'],
  ['Coconut milk','Drinks'],['Kirkland sparkling ice','Drinks'],['Kirkland energy drinks','Drinks'],['Poppi','Drinks'],['Body Armor Lyte','Drinks'],
- ['Chicken wings','Freezer',['sweet chipotle chicken wings','frozen bbq chipotle chicken wings']],['Breakfast sandwiches','Freezer',['frozen breakfast sandwiches']],['Dole Whips','Freezer'],['Outshine popsicles','Freezer'],['Uncrustables','Freezer'],['Frozen hamburger patties','Freezer'],['Taquitos','Freezer'],['Frollies','Freezer'],['Mini tacos','Freezer'],['Fried rice','Freezer'],['Vanilla ice cream','Freezer',['ice cream']],['Frozen pizzas','Freezer'],['Microwavable bacon','Freezer'],
- // refrigerated / meat: closest cold zone is Freezer in this 5-zone layout
- ['Jimmy Dean sausage','Freezer'],['Chicken and maple sausage','Freezer'],['Ground beef','Freezer'],['Pork belly','Freezer'],['Chicken thighs','Freezer'],['Tri-tip','Freezer'],['Lunch meat','Freezer'],['Heavy whipping cream','Freezer'],['Butter','Freezer'],['Salsa','Freezer'],
+ ['Chicken wings','Freezer',['sweet chipotle chicken wings','frozen bbq chipotle chicken wings']],['Breakfast sandwiches','Freezer',['frozen breakfast sandwiches']],['Dole Whips','Freezer'],['Outshine popsicles','Freezer'],['Uncrustables','Freezer'],['Frozen hamburger patties','Freezer'],['Taquitos','Freezer'],['Frollies','Freezer'],['Mini tacos','Freezer'],['Fried rice','Freezer'],['Vanilla ice cream','Freezer',['ice cream']],['Frozen pizzas','Freezer'],
+ ['Jimmy Dean sausage','Open air coolers'],['Chicken and maple sausage','Open air coolers'],['Ground beef','Open air coolers'],['Pork belly','Open air coolers'],['Chicken thighs','Open air coolers'],['Tri-tip','Open air coolers'],['Lunch meat','Open air coolers'],['Microwavable bacon','Open air coolers'],['Heavy whipping cream','Open air coolers'],['Butter','Open air coolers'],['Salsa','Open air coolers'],
  ['Maple syrup','Dry goods'],['Gummy bears','Dry goods'],['Fruit snacks','Dry goods'],['Red rooster sauce','Dry goods'],['Eatiful yellow curry soup packets','Dry goods'],['Mayo','Dry goods'],['Chili','Dry goods'],['Ramen','Dry goods'],['Cheez-Its','Dry goods'],['Chocolate almonds','Dry goods'],['Cocoa Puffs','Dry goods'],['Chip bags','Dry goods'],['Sticky white rice','Dry goods',['sticky rice']],['Ghirardelli brownie mix','Dry goods'],['Canned chicken breast','Dry goods'],
  ['Cat food','Dry goods'],['Paper plates','Dry goods'],['Ziploc bags','Dry goods'],['Gum','Dry goods'],['Stud finder','Dry goods'],['SAE 5W-30 motor oil','Dry goods'],['Engine coolant','Dry goods']];
  const ord={};const items=CAT.map(([name,s,al])=>{const k=sid(s);ord[k]=(ord[k]||0);return{id:'i-'+sid(name).replace(/[^a-z0-9-]/g,''),name,aliases:al||[],stores:{[SID]:{section:k,order:ord[k]++}},usualQty:1,turnover:'auto',inStock:null}});
@@ -30,9 +29,28 @@ function seed(){
  trips.push({id:'t-2026-10-12',storeId:SID,date:'2026-10-12',active:true,items:['Apples','Bananas','Berries','Grapes','Salad pack','Sourdough pizza crust','Coconut milk','Kirkland sparkling ice','Chicken wings','Maple syrup','Gummy bears'].map(n=>({itemId:find(n).id,qty:1,checkedAt:null}))});
  return{stores,items,trips,ui:{cur:SID,hide:false,theme:null}};
 }
+/* keyword map: routes new (unknown) items from typing, voice and paste to a section by name */
+const KEYWORDS=[
+ ['Freezer',/\b(frozen|ice cream|popsicles?|dole whips?|outshine|uncrustables|taquitos|mini tacos|fried rice|burritos?|hamburger patties|patties|shredded cheese|breakfast sandwich|pizzas?|chicken wings|wings)\b/i],
+ ['Open air coolers',/\b(ground beef|beef|steaks?|tri-?tip|pork|pork belly|chicken breasts?|chicken thighs?|turkey|seafood|salmon|shrimp|fish|lunch meat|deli|sausage|bacon|kits?|chicken salad|fajita|taco kit|butter|cream|salsa|hummus|eggs?|milk(?! chocolate)|cheese|yogurt)\b/i],
+ ['Produce',/\b(apples?|bananas?|berries|strawberr|blueberr|grapes|salad|lettuce|spinach|avocados?|peaches|pineapple|oranges?|mandarins?|lemons?|limes?|onions?|potatoes|tomatoes|peppers|carrots|cucumbers?|broccoli|fruit(?! snacks))\b/i],
+ ['Bakery',/\b(bread|sourdough|bagels?|muffins?|croissants?|buns|rolls|tortillas|cake|cookies|pizza crust)\b/i],
+ ['Drinks',/\b(water|sparkling|soda|juice|coffee|tea|energy drinks?|poppi|body armor|coconut milk|drinks?|lyte|gatorade|kombucha)\b/i]];
+function guessSection(name,st=store()){if(/coconut milk/i.test(name)){const d=st.sections.find(s=>norm(s.name)==='drinks');if(d)return d.id}
+ for(const [sec,re] of KEYWORDS)if(re.test(name)){const s=st.sections.find(x=>norm(x.name)===norm(sec));if(s)return s.id}
+ const d=st.sections.find(s=>norm(s.name)==='dry goods');return d?d.id:null}
+/* v2 -> v3: add Open air coolers after Bakery and re-section items; trips and checks untouched */
+function migrate(d,from){if(from<3){const st=d.stores.find(s=>s.id==='costco-desert-color');if(st){
+  let oac=st.sections.find(s=>norm(s.name)==='open air coolers');if(!oac){oac={id:'open-air-coolers',name:'Open air coolers'};const bi=st.sections.findIndex(s=>s.id==='bakery');st.sections.splice(bi>=0?bi+1:st.sections.length,0,oac)}
+  const fz=st.sections.find(s=>s.id==='freezer');
+  const toOAC=['jimmy dean sausage','chicken and maple sausage','ground beef','pork belly','chicken thighs','tri-tip','lunch meat','microwavable bacon','heavy whipping cream','butter','salsa'];
+  const toFZ=['frozen hamburger patties','breakfast sandwiches','vanilla ice cream','dole whips','outshine popsicles','frozen pizzas','chicken wings','taquitos','mini tacos','uncrustables','fried rice'];
+  const put=(it,sec)=>{let m=-1;d.items.forEach(i=>{const p=i.stores[st.id];if(p&&p.section===sec)m=Math.max(m,p.order)});it.stores[st.id]={section:sec,order:m+1}};
+  d.items.forEach(it=>{const n=norm(it.name);if(toOAC.includes(n)&&(!it.stores[st.id]||it.stores[st.id].section!==oac.id))put(it,oac.id);else if(fz&&toFZ.includes(n)&&(!it.stores[st.id]||it.stores[st.id].section!==fz.id))put(it,fz.id)})}}
+ return d}
 /* ---------- load / save ---------- */
 let DB;
-function load(){try{if(+localStorage.getItem(K.v)===DATA_VERSION){const d={stores:JSON.parse(localStorage.getItem(K.stores)),items:JSON.parse(localStorage.getItem(K.items)),trips:JSON.parse(localStorage.getItem(K.trips)),ui:JSON.parse(localStorage.getItem(K.ui))||{}};if(d.stores&&d.stores.length&&d.items&&d.trips)return d}}catch(e){}
+function load(){try{const v=+localStorage.getItem(K.v);if(v>=2&&v<=DATA_VERSION){const d={stores:JSON.parse(localStorage.getItem(K.stores)),items:JSON.parse(localStorage.getItem(K.items)),trips:JSON.parse(localStorage.getItem(K.trips)),ui:JSON.parse(localStorage.getItem(K.ui))||{}};if(d.stores&&d.stores.length&&d.items&&d.trips){if(v<DATA_VERSION){migrate(d,v);save(d)}return d}}}catch(e){}
  const d=seed();save(d);return d}
 function save(d=DB){localStorage.setItem(K.v,DATA_VERSION);localStorage.setItem(K.stores,JSON.stringify(d.stores));localStorage.setItem(K.items,JSON.stringify(d.items));localStorage.setItem(K.trips,JSON.stringify(d.trips));localStorage.setItem(K.ui,JSON.stringify(d.ui))}
 DB=load();
@@ -116,7 +134,7 @@ const selSec=()=>{const c=sheet.querySelector('[data-sec][aria-pressed=true]');r
 /* add one item to the active trip; section (optional) writes back to this store only */
 function addToTrip(name,qty,sec){const st=store(),t=trip();name=name.trim();if(!name)return null;
  let it=findItem(name);if(!it){it={id:uid(),name,aliases:[],stores:{},usualQty:1,turnover:'auto',inStock:null};DB.items.push(it)}
- const p=it.stores[st.id];if(sec&&(!p||p.section!==sec))it.stores[st.id]={section:sec,order:nextOrder(sec)};else place(it,st);
+ const p=it.stores[st.id];if(!sec&&!p)sec=guessSection(name,st);if(sec&&(!p||p.section!==sec))it.stores[st.id]={section:sec,order:nextOrder(sec)};else place(it,st);
  it.inStock=null;const e=t.items.find(x=>x.itemId===it.id);if(e){e.qty=qty||e.qty;e.checkedAt=null}else t.items.push({itemId:it.id,qty:qty||1,checkedAt:null});return it}
 const NUM={one:1,a:1,an:1,two:2,three:3,four:4,five:5,six:6,seven:7,eight:8,nine:9,ten:10,couple:2};
 function parseSpoken(s){return s.split(/,|\band\b|\n/i).map(x=>x.trim()).filter(Boolean).map(x=>{let q=1;const m=x.match(/^(\d+|one|a|an|two|three|four|five|six|seven|eight|nine|ten|couple)\s+(?:of\s+)?(?:(?:bags?|boxes?|packs?|cases?|bottles?)\s+(?:of\s+)?)?(.+)$/i);if(m){q=+m[1]||NUM[m[1].toLowerCase()]||1;x=m[2]}return{name:x.charAt(0).toUpperCase()+x.slice(1),qty:q}})}
@@ -127,7 +145,7 @@ function openAdd(){const st=store();if(!st.sections.length){openStores();return}
  openSheet(`<h3>Add item</h3>${picks.length?`<label class="f">Usual picks</label><div class="picks">${picks.map(x=>`<button class="chip" data-pick="${x.i.id}">${esc(x.i.name)}<small>${x.c.count} trips${x.c.avgGap?` · ~${x.c.avgGap}d`:''}</small></button>`).join('')}</div>`:''}
  <label class="f" for="nm">Name</label><div class="field"><input class="t" id="nm" autocomplete="off" placeholder="e.g. Bananas — or paste a list">${SR?'<button class="mic" id="mic" aria-label="Add by voice">🎤</button>':''}</div><p class="hint" id="hint">${SR?'Say "two bags of apples and bananas". ':''}Paste several lines to add them all.</p><div class="sugg" id="sugg"></div><div id="usual"></div><label class="f">Section</label>${chips(st.sections[0].id)}<label class="f">Quantity</label>${stepper('qty',1)}<div class="actions"><button class="btn text" id="cx">Cancel</button><button class="btn" id="ok">Add</button></div>`);
  const nm=$('#nm');setTimeout(()=>nm.focus(),50);
- const apply=()=>{const it=findItem(nm.value),p=it&&it.stores[st.id];if(p)sheet.querySelectorAll('[data-sec]').forEach(x=>x.setAttribute('aria-pressed',x.dataset.sec===p.section));
+ const apply=()=>{const it=findItem(nm.value),p=it&&it.stores[st.id],g=p?p.section:(nm.value.trim()&&guessSection(nm.value,st));if(g)sheet.querySelectorAll('[data-sec]').forEach(x=>x.setAttribute('aria-pressed',x.dataset.sec===g));
   $('#usual').innerHTML=it&&it.usualQty>1?`<div class="usual"><span>${it.usualQty} like usual?</span><button class="btn tonal" id="yes">Yes, ${it.usualQty}</button></div>`:'';
   const y=$('#yes');if(y)y.onclick=()=>{$('#qty').textContent=it.usualQty;$('#usual').innerHTML=''}};
  nm.oninput=()=>{const q=norm(nm.value);const list=q?DB.items.filter(i=>(norm(i.name).includes(q)||i.aliases.some(a=>a.includes(q)))&&norm(i.name)!==q).slice(0,5):[];
