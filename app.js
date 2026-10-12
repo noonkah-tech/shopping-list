@@ -1,12 +1,12 @@
 'use strict';
 /* System of record: three JSON objects (stores, items, trips) + ui prefs, each in localStorage. */
-const DATA_VERSION=4,K={v:'shop.version',stores:'shop.stores',items:'shop.items',trips:'shop.trips',ui:'shop.ui'};
+const DATA_VERSION=5,K={v:'shop.version',stores:'shop.stores',items:'shop.items',trips:'shop.trips',ui:'shop.ui'};
 const $=s=>document.querySelector(s),uid=()=>Math.random().toString(36).slice(2,10),today=()=>{const d=new Date();return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0')};
 const esc=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const norm=s=>String(s).trim().toLowerCase().replace(/\s+/g,' ');
 /* South St. George Costco counterclockwise walk. kw routes new items (typing, voice, paste); hint is the optional example line. */
 const COSTCO_LAYOUT=[
- ['center','Center','Protein shakes, jerky, nuts, register snacks, seasonal, books, gifts, plants, clothing',/\b(protein shakes?|jerky|nuts|trail mix|seasonal|books?|gifts?|plants?|flowers|clothing|shirts?|socks|shoes|gum|candy bars?)\b/i],
+ ['center','Center','Protein shakes, jerky, nuts, register snacks, seasonal, books, gifts, plants, clothing',/\b(protein shakes?|jerky|nuts|trail mix|seasonal|books?|gifts?|plants?|flowers|clothing|shirts?|socks|shoes|candy bars?)\b/i],
  ['electronics','Electronics','TVs, laptops, phones, headphones',/\b(tv|television|laptop|tablet|ipad|phone|headphones|earbuds|camera|printer|ink|monitor|electronics?|charger|cables?|batteries for)\b/i],
  ['home-kitchen','Home & kitchen','Hardware, fans, lights, compressors, bikes, blenders, microwaves, plates, pots, Tupperware',/\b(hardware|tools?|ceiling fans?|fans?|lights?|bulbs|lamps?|air compressors?|bikes?|bicycles?|blenders?|microwaves?|toasters?|silverware|utensils|pots|pans|tupperware|containers|knives|kitchen)\b/i],
  ['bedding-bath','Bedding & bath','Pillows, blankets, floor mats, towels',/\b(pillows?|blankets?|sheets|comforters?|floor mats?|mats?|towels?|bath)\b/i],
@@ -21,13 +21,12 @@ const COSTCO_LAYOUT=[
  ['drinks','Drinks','Soda, White Claw, Modelo, juice, coconut water/milk, Poppi, sparkling ice, Gatorade',/\b(soda|white claw|modelo|beer|wine|juices?|coconut water|coconut milk|poppi|sparkling|water|gatorade|body armor|energy drinks?|lyte|coke|pepsi|drinks?)\b/i],
  ['chips','Chips','Doritos, corn chips, Cheez-Its, chip bags',/\b(chips?|doritos|cheez-?its|pretzels|popcorn|crackers? snack)\b/i],
  ['glass-door-coolers','Glass-door coolers','Cheese sticks, yogurt, tortillas, kombucha, smoothie mixes',/\b(cheese sticks?|string cheese|yogurt|tortillas?|kombucha|smoothie)\b/i],
- ['freezer','Freezer','Everything frozen: patties, burritos, ice cream, pizzas, wings, Uncrustables',/\b(frozen|patties|burritos?|shredded cheese|breakfast sandwich\w*|ice cream|dole whips?|popsicles?|outshine|pizzas?|chicken wings|wings|taquitos|mini tacos|uncrustables|fried rice)\b/i],
+ ['freezer','Freezer','Everything frozen: patties, burritos, ice cream, pizzas, wings, Uncrustables',/\b(frollies|frozen|patties|burritos?|shredded cheese|breakfast sandwich\w*|ice cream|dole whips?|popsicles?|outshine|pizzas?|chicken wings|wings|taquitos|mini tacos|uncrustables|fried rice)\b/i],
  ['coffee-cereal','Coffee & cereal','Coffee, Cocoa Puffs',/\b(coffee|k-?cups|espresso|cereal|cocoa puffs|cheerios)\b/i],
- ['pantry','Pantry','Canned and jarred goods, crackers, syrup, ramen, rice, brownie mix, gummies',/\b(canned|cans?|jar|tomato sauce|tomato paste|paste|beans|olives|crackers|maple syrup|syrup|ramen|chili|soup|sriracha|rooster|sauce|brownie|mix|rice|pasta|flour|sugar|oil|peanut butter|gummy|gummies|fruit snacks|frollies|chocolate almonds|mayo|ketchup|mustard|spices?)\b/i]];
+ ['pantry','Pantry','Canned and jarred goods, crackers, syrup, ramen, rice, brownie mix, gummies',/\b(canned|cans?|jar|tomato sauce|tomato paste|paste|beans|olives|crackers|maple syrup|syrup|ramen|chili|soup|sriracha|rooster|sauce|brownie|mix|rice|pasta|flour|sugar|oil|peanut butter|gummy|gummies|fruit snacks|gum|chocolate almonds|mayo|ketchup|mustard|spices?)\b/i]];
 /* seed + migration placement for known items (normalized name -> section id) */
 const COSTCO_PLACE={};Object.entries({
  'outdoor-auto':['stud finder','sae 5w-30 motor oil','engine coolant'],
- 'center':['gum'],
  'produce':['apples','bananas','peaches','pineapple','mandarin oranges','grapes'],
  'cold-produce':['berries','salad pack','caesar salad packs'],
  'bakery':['sourdough pizza crust','chocolate muffins'],
@@ -36,9 +35,9 @@ const COSTCO_PLACE={};Object.entries({
  'household':['ziploc bags','cat food','paper plates'],
  'drinks':['coconut milk','kirkland sparkling ice','kirkland energy drinks','poppi','body armor lyte'],
  'chips':['chip bags','cheez-its'],
- 'freezer':['chicken wings','breakfast sandwiches','dole whips','outshine popsicles','uncrustables','frozen hamburger patties','taquitos','mini tacos','fried rice','vanilla ice cream','frozen pizzas'],
+ 'freezer':['chicken wings','breakfast sandwiches','dole whips','outshine popsicles','uncrustables','frozen hamburger patties','taquitos','mini tacos','fried rice','vanilla ice cream','frozen pizzas','frollies'],
  'coffee-cereal':['cocoa puffs'],
- 'pantry':['maple syrup','gummy bears','fruit snacks','frollies','chocolate almonds','red rooster sauce','eatiful yellow curry soup packets','mayo','chili','ramen','sticky white rice','ghirardelli brownie mix','canned chicken breast']}).forEach(([k,l])=>l.forEach(n=>COSTCO_PLACE[n]=k));
+ 'pantry':['maple syrup','gummy bears','fruit snacks','gum','chocolate almonds','red rooster sauce','eatiful yellow curry soup packets','mayo','chili','ramen','sticky white rice','ghirardelli brownie mix','canned chicken breast']}).forEach(([k,l])=>l.forEach(n=>COSTCO_PLACE[n]=k));
 /* ---------- seed ---------- */
 function seed(){
  const SID='costco-desert-color',sec=['Produce','Bakery','Open air coolers','Drinks','Freezer','Dry goods'],sid=n=>n.toLowerCase().replace(/\s+/g,'-');
@@ -67,7 +66,7 @@ function seed(){
 /* keyword map: routes unknown items to a section; uses the Costco layout kw by section id or name, then falls back to the last pantry-like section */
 function guessSection(name,st=store()){const has=id=>st.sections.find(s=>s.id===id)||null;
  if(/coconut milk/i.test(name)){const d=has('drinks')||st.sections.find(s=>norm(s.name)==='drinks');if(d)return d.id}
- const pri=/\bfrozen\b/i.test(name)?['freezer']:/paper towels?|toilet paper|paper plates/i.test(name)?['household']:[];
+ const pri=/\b(frozen|frollies)\b/i.test(name)?['freezer']:/paper towels?|toilet paper|paper plates/i.test(name)?['household']:[];
  for(const [id,nm,,re] of [...COSTCO_LAYOUT.filter(x=>pri.includes(x[0])),...COSTCO_LAYOUT])if(pri.includes(id)||re.test(name)){const s=has(id)||st.sections.find(x=>norm(x.name)===norm(nm));if(s)return s.id}
  const d=st.sections.find(s=>['pantry','dry goods'].includes(norm(s.name)));return d?d.id:null}
 /* v2 -> v3: add Open air coolers after Bakery and re-section items; trips and checks untouched */
@@ -90,6 +89,8 @@ function migrate(d,from){if(from<3){const st=d.stores.find(s=>s.id==='costco-des
    if(ids.has(p.section)&&!['produce','bakery','open-air-coolers','drinks','freezer'].includes(p.section))return put(it,p.section);
    const g=guessSection(it.name,st)||'pantry';put(it,g)});
   keep.filter(o=>used.has(o.id)).forEach(o=>st.sections.push(o))}}
+ if(from<5){const st=d.stores.find(s=>s.id==='costco-desert-color');if(st){const mv={'gum':'pantry','frollies':'freezer'};
+  d.items.forEach(it=>{const k=mv[norm(it.name)],p=it.stores[st.id];if(k&&p&&p.section!==k&&st.sections.some(s=>s.id===k)){let m=-1;d.items.forEach(i=>{const q=i.stores[st.id];if(q&&q.section===k)m=Math.max(m,q.order)});it.stores[st.id]={section:k,order:m+1}}})}}
  return d}
 /* ---------- load / save ---------- */
 let DB;
