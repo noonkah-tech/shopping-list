@@ -1,45 +1,86 @@
 'use strict';
-const KEY='shoplist.v1',$=s=>document.querySelector(s),uid=()=>Math.random().toString(36).slice(2,10);
-const HUES=[110,30,200,265,45,340,170,15,230,80];
-function defaults(){const id=uid();return{v:1,cur:id,stores:[{id,name:'South St. George Costco',sections:['Produce','Bakery','Drinks','Freezer','Dry goods'].map((n,i)=>({id:uid(),name:n,hue:HUES[i]}))}],items:[],tags:{},trips:[],hide:false,theme:null}}
-let S;try{S=JSON.parse(localStorage.getItem(KEY))}catch(e){}if(!S||!S.stores||!S.stores.length)S=defaults();
-const expanded=new Set();
-const save=()=>localStorage.setItem(KEY,JSON.stringify(S));
-const store=()=>S.stores.find(s=>s.id===S.cur)||S.stores[0];
-const tkey=(n,st=S.cur)=>st+'::'+n.trim().toLowerCase();
+/* System of record: three JSON objects (stores, items, trips) + ui prefs, each in localStorage. */
+const DATA_VERSION=2,K={v:'shop.version',stores:'shop.stores',items:'shop.items',trips:'shop.trips',ui:'shop.ui'};
+const $=s=>document.querySelector(s),uid=()=>Math.random().toString(36).slice(2,10),today=()=>{const d=new Date();return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0')};
 const esc=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-const mine=()=>S.items.filter(i=>i.storeId===store().id);
-function theme(){const t=S.theme||(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light');document.documentElement.dataset.theme=t;$('#themeBtn').textContent=t==='dark'?'☀':'☾';$('#themeBtn').setAttribute('aria-label',t==='dark'?'Switch to light theme':'Switch to dark theme');document.querySelector('meta[name=theme-color]').content=getComputedStyle(document.documentElement).getPropertyValue('--md-sys-color-surface-container').trim()}
-matchMedia('(prefers-color-scheme: dark)').addEventListener('change',()=>{if(!S.theme)theme()});
-// undo
-let undoSnap=null,snackT;function snapshot(){return JSON.stringify(S)}
-function snack(msg,snap){undoSnap=snap;$('#snackMsg').textContent=msg;$('#snack').classList.add('on');clearTimeout(snackT);snackT=setTimeout(()=>$('#snack').classList.remove('on'),4000)}
-$('#undoBtn').onclick=()=>{if(undoSnap){S=JSON.parse(undoSnap);undoSnap=null;save();render()}$('#snack').classList.remove('on')};
+const norm=s=>String(s).trim().toLowerCase().replace(/\s+/g,' ');
+/* ---------- seed ---------- */
+function seed(){
+ const SID='costco-desert-color',sec=['Produce','Bakery','Drinks','Freezer','Dry goods'],sid=n=>n.toLowerCase().replace(/\s+/g,'-');
+ const stores=[{id:SID,name:'South St. George Costco (Desert Color)',sections:sec.map(n=>({id:sid(n),name:n}))}];
+ // [name, section, aliases]
+ const CAT=[['Apples','Produce'],['Bananas','Produce'],['Berries','Produce'],['Grapes','Produce'],['Salad pack','Produce',['salad']],['Caesar salad packs','Produce'],['Peaches','Produce'],['Pineapple','Produce'],['Mandarin oranges','Produce'],
+ ['Sourdough pizza crust','Bakery'],['Chocolate muffins','Bakery'],
+ ['Coconut milk','Drinks'],['Kirkland sparkling ice','Drinks'],['Kirkland energy drinks','Drinks'],['Poppi','Drinks'],['Body Armor Lyte','Drinks'],
+ ['Chicken wings','Freezer',['sweet chipotle chicken wings','frozen bbq chipotle chicken wings']],['Breakfast sandwiches','Freezer',['frozen breakfast sandwiches']],['Dole Whips','Freezer'],['Outshine popsicles','Freezer'],['Uncrustables','Freezer'],['Frozen hamburger patties','Freezer'],['Taquitos','Freezer'],['Frollies','Freezer'],['Mini tacos','Freezer'],['Fried rice','Freezer'],['Vanilla ice cream','Freezer',['ice cream']],['Frozen pizzas','Freezer'],['Microwavable bacon','Freezer'],
+ // refrigerated / meat: closest cold zone is Freezer in this 5-zone layout
+ ['Jimmy Dean sausage','Freezer'],['Chicken and maple sausage','Freezer'],['Ground beef','Freezer'],['Pork belly','Freezer'],['Chicken thighs','Freezer'],['Tri-tip','Freezer'],['Lunch meat','Freezer'],['Heavy whipping cream','Freezer'],['Butter','Freezer'],['Salsa','Freezer'],
+ ['Maple syrup','Dry goods'],['Gummy bears','Dry goods'],['Fruit snacks','Dry goods'],['Red rooster sauce','Dry goods'],['Eatiful yellow curry soup packets','Dry goods'],['Mayo','Dry goods'],['Chili','Dry goods'],['Ramen','Dry goods'],['Cheez-Its','Dry goods'],['Chocolate almonds','Dry goods'],['Cocoa Puffs','Dry goods'],['Chip bags','Dry goods'],['Sticky white rice','Dry goods',['sticky rice']],['Ghirardelli brownie mix','Dry goods'],['Canned chicken breast','Dry goods'],
+ ['Cat food','Dry goods'],['Paper plates','Dry goods'],['Ziploc bags','Dry goods'],['Gum','Dry goods'],['Stud finder','Dry goods'],['SAE 5W-30 motor oil','Dry goods'],['Engine coolant','Dry goods']];
+ const ord={};const items=CAT.map(([name,s,al])=>{const k=sid(s);ord[k]=(ord[k]||0);return{id:'i-'+sid(name).replace(/[^a-z0-9-]/g,''),name,aliases:al||[],stores:{[SID]:{section:k,order:ord[k]++}},usualQty:1,turnover:'auto',inStock:null}});
+ const find=n=>items.find(i=>norm(i.name)===norm(n)||i.aliases.includes(norm(n)));
+ items.find(i=>i.name==='Mayo').turnover='low';
+ ['Frollies','Uncrustables','breakfast sandwiches','cat food','gum','Ziploc bags','sticky white rice','chip bags','fruit snacks','lunch meat','fried rice','chicken and maple sausage','ice cream','ground beef','paper plates'].forEach(n=>find(n).inStock='2026-10-12');
+ const P={'2026-08-09':'salsa, maple syrup, bananas, fruit snacks, Dole Whips, frozen breakfast sandwiches, stud finder, Outshine popsicles, red rooster sauce, salad, pork belly, apples, peaches, pineapple, grapes, berries, chocolate muffins',
+ '2026-08-15':'Uncrustables, sweet chipotle chicken wings, Jimmy Dean sausage, berries, sticky rice, Eatiful yellow curry soup packets, mayo, Caesar salad packs, Kirkland energy drinks, Kirkland sparkling ice, frozen hamburger patties, ground beef, cat food, taquitos, paper plates, Frollies, SAE 5W-30 motor oil, engine coolant, microwavable bacon, chili, Poppi, ramen, Cheez-Its, chocolate almonds, heavy whipping cream, mini tacos, Cocoa Puffs, chicken thighs, butter',
+ '2026-09-06':'chip bags, berries, coconut milk, frozen BBQ chipotle chicken wings, Frollies, Kirkland sparkling ice, Body Armor Lyte, lunch meat, gummy bears, sticky white rice, fruit snacks, fried rice, chicken and maple sausage, vanilla ice cream, Uncrustables, frozen pizzas, tri-tip, pineapple, bananas, mandarin oranges, Ghirardelli brownie mix, canned chicken breast',
+ '2026-09-25':'Ziploc bags, berries, bananas, apples, breakfast sandwiches, Uncrustables, cat food, gum, Frollies',
+ '2026-10-09':'apples, bananas, berries, grapes, coconut milk, sourdough pizza crust, maple syrup, gummy bears, salad pack, chicken wings, Kirkland sparkling ice'};
+ const trips=Object.entries(P).map(([date,l])=>({id:'t-'+date,storeId:SID,date,active:false,items:[...new Set(l.split(',').map(n=>{const it=find(n);if(!it)throw Error('seed miss '+n);return it.id}))].map(itemId=>({itemId,qty:1,checkedAt:date+'T12:00:00'}))}));
+ trips.push({id:'t-2026-10-12',storeId:SID,date:'2026-10-12',active:true,items:['Apples','Bananas','Berries','Grapes','Salad pack','Sourdough pizza crust','Coconut milk','Kirkland sparkling ice','Chicken wings','Maple syrup','Gummy bears'].map(n=>({itemId:find(n).id,qty:1,checkedAt:null}))});
+ return{stores,items,trips,ui:{cur:SID,hide:false,theme:null}};
+}
+/* ---------- load / save ---------- */
+let DB;
+function load(){try{if(+localStorage.getItem(K.v)===DATA_VERSION){const d={stores:JSON.parse(localStorage.getItem(K.stores)),items:JSON.parse(localStorage.getItem(K.items)),trips:JSON.parse(localStorage.getItem(K.trips)),ui:JSON.parse(localStorage.getItem(K.ui))||{}};if(d.stores&&d.stores.length&&d.items&&d.trips)return d}}catch(e){}
+ const d=seed();save(d);return d}
+function save(d=DB){localStorage.setItem(K.v,DATA_VERSION);localStorage.setItem(K.stores,JSON.stringify(d.stores));localStorage.setItem(K.items,JSON.stringify(d.items));localStorage.setItem(K.trips,JSON.stringify(d.trips));localStorage.setItem(K.ui,JSON.stringify(d.ui))}
+DB=load();
+const expanded=new Set();
+const store=()=>DB.stores.find(s=>s.id===DB.ui.cur)||DB.stores[0];
+const item=id=>DB.items.find(i=>i.id===id);
+const findItem=n=>{const q=norm(n);return DB.items.find(i=>norm(i.name)===q||(i.aliases||[]).includes(q))};
+function trip(){const st=store();let t=DB.trips.find(t=>t.active&&t.storeId===st.id);if(!t){t={id:uid(),storeId:st.id,date:today(),active:true,items:[]};DB.trips.push(t)}return t}
+function place(it,st=store()){let p=it.stores[st.id];if(!p||!st.sections.some(s=>s.id===p.section)){p=it.stores[st.id]={section:st.sections[0].id,order:nextOrder(st.sections[0].id)}}return p}
+function nextOrder(sec,st=store()){let m=-1;DB.items.forEach(i=>{const p=i.stores[st.id];if(p&&p.section===sec)m=Math.max(m,p.order)});return m+1}
+/* learning */
+function history(it){return DB.trips.filter(t=>!t.active).map(t=>({t,e:t.items.find(x=>x.itemId===it.id)})).filter(x=>x.e)}
+function learn(it){const q=history(it).map(x=>x.e.qty).sort((a,b)=>a-b);if(q.length){const m=q.length>>1;it.usualQty=Math.max(1,Math.round(q.length%2?q[m]:(q[m-1]+q[m])/2))}}
+function cadence(it){const d=history(it).map(x=>+new Date(x.t.date)).sort((a,b)=>a-b);const gaps=d.slice(1).map((v,i)=>(v-d[i])/864e5);return{count:d.length,avgGap:gaps.length?Math.round(gaps.reduce((a,b)=>a+b,0)/gaps.length):null,last:d.length?new Date(d[d.length-1]):null}}
+function usualPicks(){const t=trip(),on=new Set(t.items.map(e=>e.itemId)),now=Date.now();
+ return DB.items.filter(i=>!on.has(i.id)&&i.turnover!=='low'&&!i.inStock).map(i=>{const c=cadence(i);const due=c.avgGap&&c.last?(now-c.last)/864e5/c.avgGap:0;return{i,c,score:c.count*2+Math.min(due,2)}}).filter(x=>x.c.count>=2).sort((a,b)=>b.score-a.score).slice(0,10)}
+/* ---------- theme ---------- */
+function theme(){const t=DB.ui.theme||(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light');document.documentElement.dataset.theme=t;$('#themeBtn').textContent=t==='dark'?'☀':'☾';$('#themeBtn').setAttribute('aria-label',t==='dark'?'Switch to light theme':'Switch to dark theme');document.querySelector('meta[name=theme-color]').content=getComputedStyle(document.documentElement).getPropertyValue('--md-sys-color-surface-container').trim()}
+matchMedia('(prefers-color-scheme: dark)').addEventListener('change',()=>{if(!DB.ui.theme)theme()});
+/* ---------- undo ---------- */
+let undoSnap=null,snackT;const snapshot=()=>JSON.stringify(DB);
+function snack(msg,snap){undoSnap=snap;$('#snackMsg').textContent=msg;$('#undoBtn').hidden=!snap;$('#snack').classList.add('on');clearTimeout(snackT);snackT=setTimeout(()=>$('#snack').classList.remove('on'),4000)}
+$('#undoBtn').onclick=()=>{if(undoSnap){DB=JSON.parse(undoSnap);undoSnap=null;save();render()}$('#snack').classList.remove('on')};
+/* ---------- render ---------- */
 function render(){
- const st=store(),its=mine(),secIds=new Set(st.sections.map(s=>s.id));
- its.forEach(i=>{if(!secIds.has(i.sectionId))i.sectionId=st.sections[0]&&st.sections[0].id});
+ const st=store(),t=trip(),rows=t.items.map(e=>({e,it:item(e.itemId)})).filter(x=>x.it);rows.forEach(x=>x.p=place(x.it,st));
  $('#storeName').textContent=st.name;
- const M=its.length,N=its.filter(i=>!i.checked).length,p=$('#prog');
+ const M=rows.length,N=rows.filter(x=>!x.e.checkedAt).length,p=$('#prog');
  p.textContent=M&&N===0?'Done':`${N} of ${M} left`;p.classList.toggle('done',M>0&&N===0);
  const pct=M?Math.round((M-N)/M*100):0;$('#bar i').style.width=pct+'%';$('#bar').setAttribute('aria-valuenow',pct);
- const hb=$('#hideBtn');hb.setAttribute('aria-pressed',S.hide);hb.innerHTML=(S.hide?'◌ Hidden':'◉ Shown');hb.setAttribute('aria-label',S.hide?'Checked items hidden. Tap to show':'Checked items shown. Tap to hide');
+ const hb=$('#hideBtn');hb.setAttribute('aria-pressed',!!DB.ui.hide);hb.textContent=DB.ui.hide?'◌ Hidden':'◉ Shown';hb.setAttribute('aria-label',DB.ui.hide?'Checked items hidden. Tap to show':'Checked items shown. Tap to hide');
  const L=$('#list');
- if(!M){L.innerHTML=`<div class="empty"><h2>Your list is empty</h2><p>Add what you need at ${esc(st.name)}. Items land in their section in walk order.</p><div class="actions" style="justify-content:center"><button class="btn" data-a="add">Add item</button><button class="btn tonal" data-a="import">Import JSON</button></div></div>`+st.sections.map(sec=>`<section class="card"><div class="chead"><h2>${esc(sec.name)}</h2><span class="n">0 left</span></div></section>`).join('');return}
- L.innerHTML=st.sections.map(sec=>{
-  const all=its.filter(i=>i.sectionId===sec.id).sort((a,b)=>a.order-b.order),un=all.filter(i=>!i.checked),ch=all.filter(i=>i.checked);
-  const open=!S.hide||expanded.has(sec.id);
-  let rows=un.map(row).join('');
-  if(ch.length){if(S.hide)rows+=`<button class="tri${open?' open':''}" data-tri="${sec.id}" aria-expanded="${open}"><b>▶</b>${ch.length} checked</button>`;if(open)rows+=ch.map(row).join('')}
-  if(!all.length)rows=`<div class="emptysec">Nothing here yet</div>`;
-  return `<section class="card" data-sec="${sec.id}"><div class="chead"><h2>${esc(sec.name)}</h2><span class="n">${un.length} left</span></div>${rows}</section>`}).join('');
+ const cards=st.sections.map(sec=>{
+  const all=rows.filter(x=>x.p.section===sec.id).sort((a,b)=>a.p.order-b.p.order),un=all.filter(x=>!x.e.checkedAt),ch=all.filter(x=>x.e.checkedAt);
+  const open=!DB.ui.hide||expanded.has(sec.id);let h=un.map(row).join('');
+  if(ch.length){if(DB.ui.hide)h+=`<button class="tri${open?' open':''}" data-tri="${sec.id}" aria-expanded="${open}"><b>▶</b>${ch.length} checked</button>`;if(open)h+=ch.map(row).join('')}
+  if(!all.length)h=`<div class="emptysec">Nothing here yet</div>`;
+  return `<section class="card" data-sec="${sec.id}"><div class="chead"><h2>${esc(sec.name)}</h2><span class="n">${un.length} left</span></div>${h}</section>`}).join('');
+ L.innerHTML=(M?'':`<div class="empty"><h2>Your list is empty</h2><p>Add what you need at ${esc(st.name)}, or pick from your usuals. Items land in their section in walk order.</p><div class="actions" style="justify-content:center"><button class="btn" data-a="add">Add item</button><button class="btn tonal" data-a="import">Import JSON</button></div></div>`)+cards+(M?`<div class="finish"><button class="btn tonal" data-a="finish">Finish trip</button></div>`:'');
 }
-const row=i=>`<div class="row${i.checked?' checked':''}" data-id="${i.id}" role="checkbox" aria-checked="${i.checked}" tabindex="0"><span class="cb"><i></i></span><span class="nm">${esc(i.name)}</span>${i.qty>1?`<span class="q">×${i.qty}</span>`:''}<span class="grip" data-grip aria-label="Drag to reorder">⠿</span></div>`;
-function toggle(id){const it=S.items.find(i=>i.id===id);if(!it)return;const snap=snapshot();it.checked=!it.checked;
- S.trips.push({t:Date.now(),store:it.storeId,name:it.name,qty:it.qty,checked:it.checked});if(S.trips.length>5000)S.trips.splice(0,S.trips.length-5000);
- save();render();snack(`${it.checked?'Checked':'Unchecked'} ${it.name}`,snap)}
-// interactions on list
+const row=({e,it})=>`<div class="row${e.checkedAt?' checked':''}" data-id="${it.id}" role="checkbox" aria-checked="${!!e.checkedAt}" tabindex="0"><span class="cb"><i></i></span><span class="nm">${esc(it.name)}</span>${e.qty>1?`<span class="q">×${e.qty}</span>`:''}<span class="grip" data-grip aria-label="Drag to reorder">⠿</span></div>`;
+function toggle(id){const e=trip().items.find(x=>x.itemId===id);if(!e)return;const snap=snapshot();e.checkedAt=e.checkedAt?null:new Date().toISOString();save();render();snack(`${e.checkedAt?'Checked':'Unchecked'} ${item(id).name}`,snap)}
+function finishTrip(){const t=trip();if(!t.items.length)return;const snap=snapshot();t.active=false;t.date=t.date||today();
+ t.items.forEach(e=>{const it=item(e.itemId);if(it){learn(it);if(e.checkedAt)it.inStock=null}});
+ DB.trips.push({id:uid(),storeId:t.storeId,date:today(),active:true,items:[]});expanded.clear();save();render();snack('Trip finished. New empty trip started',snap)}
+/* ---------- list interactions ---------- */
 const L=$('#list');let press=null,suppress=false;
-L.addEventListener('click',e=>{const a=e.target.closest('[data-a]');if(a){a.dataset.a==='add'?openAdd():openImport();return}
+L.addEventListener('click',e=>{const a=e.target.closest('[data-a]');if(a){({add:openAdd,import:openImport,finish:()=>{if(confirm('Finish this trip and start an empty one?'))finishTrip()}})[a.dataset.a]();return}
  const t=e.target.closest('[data-tri]');if(t){const id=t.dataset.tri;expanded.has(id)?expanded.delete(id):expanded.add(id);render();return}
  if(suppress){suppress=false;return}const r=e.target.closest('.row');if(r&&!e.target.closest('[data-grip]'))toggle(r.dataset.id)});
 L.addEventListener('keydown',e=>{const r=e.target.closest('.row');if(r&&(e.key===' '||e.key==='Enter')){e.preventDefault();toggle(r.dataset.id)}});
@@ -56,83 +97,101 @@ function startDrag(e,r){e.preventDefault();const card=r.closest('.card'),rows=[.
   rows.forEach((x,k)=>{if(x===r)return;let s=0;if(k>idx&&k<=to)s=-h;if(k<idx&&k>=to)s=h;x.style.transform=s?`translateY(${s}px)`:''})};
  const up=()=>{g.removeEventListener('pointermove',mv);g.removeEventListener('pointerup',up);g.removeEventListener('pointercancel',up);
   const ids=rows.map(x=>x.dataset.id);ids.splice(to,0,ids.splice(idx,1)[0]);
-  if(to!==idx){const sec=card.dataset.sec,rest=mine().filter(i=>i.sectionId===sec&&!ids.includes(i.id)).sort((a,b)=>a.order-b.order).map(i=>i.id);
-   [...ids,...rest].forEach((id,k)=>{const it=S.items.find(i=>i.id===id);it.order=k;const tg=S.tags[tkey(it.name)];if(tg)tg.order=k});save()}
+  if(to!==idx){const st=store(),sec=card.dataset.sec;
+   // orders for this store only: dragged rows first in new order, then other items of this section keep relative order
+   const rest=DB.items.filter(i=>i.stores[st.id]&&i.stores[st.id].section===sec&&!ids.includes(i.id)).sort((a,b)=>a.stores[st.id].order-b.stores[st.id].order).map(i=>i.id);
+   [...ids,...rest].forEach((id,k)=>{item(id).stores[st.id].order=k});save()}
   render()};
  g.addEventListener('pointermove',mv);g.addEventListener('pointerup',up);g.addEventListener('pointercancel',up)}
-// sheets
+/* ---------- sheets ---------- */
 const sheet=$('#sheet'),scrim=$('#scrim');
-function openSheet(html){sheet.innerHTML='<div class="handle"></div>'+html;scrim.classList.add('on');requestAnimationFrame(()=>sheet.classList.add('on'))}
-function closeSheet(){sheet.classList.remove('on');scrim.classList.remove('on')}
+function openSheet(html){stopVoice();sheet.onchange=null;sheet.innerHTML='<div class="handle"></div>'+html;scrim.classList.add('on');requestAnimationFrame(()=>sheet.classList.add('on'))}
+function closeSheet(){stopVoice();sheet.classList.remove('on');scrim.classList.remove('on')}
 scrim.onclick=closeSheet;document.addEventListener('keydown',e=>{if(e.key==='Escape')closeSheet()});
-const chips=(sel,name='sec')=>`<div class="chips" role="radiogroup">${store().sections.map(s=>`<button class="chip" data-${name}="${s.id}" aria-pressed="${s.id===sel}">${esc(s.name)}</button>`).join('')}</div>`;
+const chips=sel=>`<div class="chips" role="radiogroup">${store().sections.map(s=>`<button class="chip" data-sec="${s.id}" aria-pressed="${s.id===sel}">${esc(s.name)}</button>`).join('')}</div>`;
 const stepper=(id,v)=>`<div class="step"><button data-dec="${id}" aria-label="Less">−</button><output id="${id}">${v}</output><button data-inc="${id}" aria-label="More">+</button></div>`;
 sheet.addEventListener('click',e=>{const d=e.target.closest('[data-dec],[data-inc]');if(d){const o=$('#'+(d.dataset.dec||d.dataset.inc));o.textContent=Math.max(1,(+o.textContent)+(d.dataset.dec?-1:1))}
  const c=e.target.closest('[data-sec]');if(c){sheet.querySelectorAll('[data-sec]').forEach(x=>x.setAttribute('aria-pressed',x===c))}});
 const selSec=()=>{const c=sheet.querySelector('[data-sec][aria-pressed=true]');return c&&c.dataset.sec};
-function nextOrder(sec){const o=mine().filter(i=>i.sectionId===sec).map(i=>i.order);return o.length?Math.max(...o)+1:0}
+/* add one item to the active trip; section (optional) writes back to this store only */
+function addToTrip(name,qty,sec){const st=store(),t=trip();name=name.trim();if(!name)return null;
+ let it=findItem(name);if(!it){it={id:uid(),name,aliases:[],stores:{},usualQty:1,turnover:'auto',inStock:null};DB.items.push(it)}
+ const p=it.stores[st.id];if(sec&&(!p||p.section!==sec))it.stores[st.id]={section:sec,order:nextOrder(sec)};else place(it,st);
+ it.inStock=null;const e=t.items.find(x=>x.itemId===it.id);if(e){e.qty=qty||e.qty;e.checkedAt=null}else t.items.push({itemId:it.id,qty:qty||1,checkedAt:null});return it}
+const NUM={one:1,a:1,an:1,two:2,three:3,four:4,five:5,six:6,seven:7,eight:8,nine:9,ten:10,couple:2};
+function parseSpoken(s){return s.split(/,|\band\b|\n/i).map(x=>x.trim()).filter(Boolean).map(x=>{let q=1;const m=x.match(/^(\d+|one|a|an|two|three|four|five|six|seven|eight|nine|ten|couple)\s+(?:of\s+)?(?:(?:bags?|boxes?|packs?|cases?|bottles?)\s+(?:of\s+)?)?(.+)$/i);if(m){q=+m[1]||NUM[m[1].toLowerCase()]||1;x=m[2]}return{name:x.charAt(0).toUpperCase()+x.slice(1),qty:q}})}
+function addMany(list){const snap=snapshot();const added=list.map(o=>addToTrip(o.name,o.qty)).filter(Boolean);save();render();closeSheet();snack(`Added ${added.length} item${added.length===1?'':'s'}`,snap)}
+let rec=null;function stopVoice(){if(rec){try{rec.stop()}catch(e){}rec=null}}
 function openAdd(){const st=store();if(!st.sections.length){openStores();return}
- openSheet(`<h3>Add item</h3><label class="f" for="nm">Name</label><input class="t" id="nm" autocomplete="off" placeholder="e.g. Bananas"><div class="sugg" id="sugg"></div><div id="usual"></div><label class="f">Section</label>${chips(st.sections[0].id)}<label class="f">Quantity</label>${stepper('qty',1)}<div class="actions"><button class="btn text" id="cx">Cancel</button><button class="btn" id="ok">Add</button></div>`);
+ const picks=usualPicks(),SR=window.SpeechRecognition||window.webkitSpeechRecognition;
+ openSheet(`<h3>Add item</h3>${picks.length?`<label class="f">Usual picks</label><div class="picks">${picks.map(x=>`<button class="chip" data-pick="${x.i.id}">${esc(x.i.name)}<small>${x.c.count} trips${x.c.avgGap?` · ~${x.c.avgGap}d`:''}</small></button>`).join('')}</div>`:''}
+ <label class="f" for="nm">Name</label><div class="field"><input class="t" id="nm" autocomplete="off" placeholder="e.g. Bananas — or paste a list">${SR?'<button class="mic" id="mic" aria-label="Add by voice">🎤</button>':''}</div><p class="hint" id="hint">${SR?'Say "two bags of apples and bananas". ':''}Paste several lines to add them all.</p><div class="sugg" id="sugg"></div><div id="usual"></div><label class="f">Section</label>${chips(st.sections[0].id)}<label class="f">Quantity</label>${stepper('qty',1)}<div class="actions"><button class="btn text" id="cx">Cancel</button><button class="btn" id="ok">Add</button></div>`);
  const nm=$('#nm');setTimeout(()=>nm.focus(),50);
- const apply=()=>{const tg=S.tags[tkey(nm.value)];if(tg){sheet.querySelectorAll('[data-sec]').forEach(x=>x.setAttribute('aria-pressed',x.dataset.sec===tg.sectionId))}
-  $('#usual').innerHTML=tg&&tg.usual>1?`<div class="usual"><span>${tg.usual} like usual?</span><button class="btn tonal" id="yes">Yes, ${tg.usual}</button></div>`:'';
-  const y=$('#yes');if(y)y.onclick=()=>{$('#qty').textContent=tg.usual;$('#usual').innerHTML=''}};
- nm.oninput=()=>{const q=nm.value.trim().toLowerCase();const list=q?Object.entries(S.tags).filter(([k,t])=>k.startsWith(st.id+'::')&&t.name.toLowerCase().includes(q)&&t.name.toLowerCase()!==q).slice(0,5):[];
-  $('#sugg').innerHTML=list.map(([k,t])=>`<button data-s="${esc(t.name)}">${esc(t.name)}<small>${esc((st.sections.find(s=>s.id===t.sectionId)||{}).name||'')}</small></button>`).join('');apply()};
+ const apply=()=>{const it=findItem(nm.value),p=it&&it.stores[st.id];if(p)sheet.querySelectorAll('[data-sec]').forEach(x=>x.setAttribute('aria-pressed',x.dataset.sec===p.section));
+  $('#usual').innerHTML=it&&it.usualQty>1?`<div class="usual"><span>${it.usualQty} like usual?</span><button class="btn tonal" id="yes">Yes, ${it.usualQty}</button></div>`:'';
+  const y=$('#yes');if(y)y.onclick=()=>{$('#qty').textContent=it.usualQty;$('#usual').innerHTML=''}};
+ nm.oninput=()=>{const q=norm(nm.value);const list=q?DB.items.filter(i=>(norm(i.name).includes(q)||i.aliases.some(a=>a.includes(q)))&&norm(i.name)!==q).slice(0,5):[];
+  $('#sugg').innerHTML=list.map(i=>{const p=i.stores[st.id];return `<button data-s="${esc(i.name)}">${esc(i.name)}<small>${esc(p?(st.sections.find(s=>s.id===p.section)||{}).name||'':'')}</small></button>`}).join('');apply()};
+ nm.addEventListener('paste',e=>{const tx=(e.clipboardData||window.clipboardData).getData('text');if(/\n/.test(tx.trim())){e.preventDefault();addMany(parseSpoken(tx))}});
  $('#sugg').onclick=e=>{const b=e.target.closest('[data-s]');if(b){nm.value=b.dataset.s;$('#sugg').innerHTML='';apply()}};
+ sheet.querySelectorAll('[data-pick]').forEach(b=>b.onclick=()=>{const it=item(b.dataset.pick);nm.value=it.name;apply();if(it.usualQty>1)$('#qty').textContent=1;nm.focus()});
+ const mic=$('#mic');if(mic)mic.onclick=()=>{if(rec){stopVoice();mic.classList.remove('on');return}
+  rec=new SR();rec.lang='en-US';rec.interimResults=true;rec.onresult=ev=>{const r=[...ev.results].map(x=>x[0].transcript).join(' ');nm.value=r;nm.oninput();
+   if(ev.results[ev.results.length-1].isFinal){const list=parseSpoken(r);stopVoice();mic.classList.remove('on');if(list.length>1)addMany(list);else if(list[0]){nm.value=list[0].name;$('#qty').textContent=list[0].qty;nm.oninput()}}};
+  rec.onerror=ev=>{$('#hint').textContent='Voice unavailable: '+ev.error;mic.classList.remove('on');rec=null};rec.onend=()=>{mic.classList.remove('on');rec=null};rec.start();mic.classList.add('on')};
  $('#cx').onclick=closeSheet;
- const add=()=>{const name=nm.value.trim();if(!name){nm.focus();return}const sec=selSec(),qty=+$('#qty').textContent,k=tkey(name),tg=S.tags[k]||(S.tags[k]={name,usual:1});
-  tg.name=name;const moved=tg.sectionId&&tg.sectionId!==sec;tg.sectionId=sec;const order=(!moved&&tg.order!=null&&!mine().some(i=>i.sectionId===sec&&i.order===tg.order))?tg.order:nextOrder(sec);tg.order=order;
-  S.items.push({id:uid(),storeId:st.id,name,sectionId:sec,qty,checked:false,order});save();render();closeSheet()};
+ const add=()=>{const name=nm.value.trim();if(!name){nm.focus();return}if(/[\n,]/.test(name)&&parseSpoken(name).length>1)return addMany(parseSpoken(name));
+  const snap=snapshot();const it=addToTrip(name,+$('#qty').textContent,selSec());save();render();closeSheet();snack(`Added ${it.name}`,snap)};
  $('#ok').onclick=add;nm.onkeydown=e=>{if(e.key==='Enter')add()}}
-function openEdit(id){const it=S.items.find(i=>i.id===id);if(!it)return;const tg=S.tags[tkey(it.name)]||(S.tags[tkey(it.name)]={name:it.name,sectionId:it.sectionId,order:it.order,usual:1});
- openSheet(`<h3>${esc(it.name)}</h3><label class="f">Quantity this trip</label>${stepper('qty',it.qty)}<label class="f">Usual quantity</label>${stepper('usu',tg.usual||1)}<label class="f">Section</label>${chips(it.sectionId)}<div class="actions"><button class="btn danger" id="rm">Remove</button><span style="flex:1"></span><button class="btn text" id="cx">Cancel</button><button class="btn" id="ok">Save</button></div>`);
+function openEdit(id){const st=store(),it=item(id),e=trip().items.find(x=>x.itemId===id);if(!it||!e)return;const p=place(it,st),c=cadence(it);
+ openSheet(`<h3>${esc(it.name)}</h3><p class="hint">${c.count?`Bought on ${c.count} trip${c.count>1?'s':''}${c.avgGap?`, about every ${c.avgGap} days`:''}.`:'New item.'}</p><label class="f">Quantity this trip</label>${stepper('qty',e.qty)}<label class="f">Usual quantity</label>${stepper('usu',it.usualQty||1)}<label class="f">Section</label>${chips(p.section)}
+ <label class="f">Turnover</label><div class="chips"><button class="chip" data-turn="auto" aria-pressed="${it.turnover!=='low'}">Auto</button><button class="chip" data-turn="low" aria-pressed="${it.turnover==='low'}">Low (don't suggest)</button></div>
+ <div class="actions"><button class="btn danger" id="rm">Remove</button><span style="flex:1"></span><button class="btn text" id="cx">Cancel</button><button class="btn" id="ok">Save</button></div>`);
+ sheet.querySelectorAll('[data-turn]').forEach(b=>b.onclick=()=>sheet.querySelectorAll('[data-turn]').forEach(x=>x.setAttribute('aria-pressed',x===b)));
  $('#cx').onclick=closeSheet;
- $('#rm').onclick=()=>{const snap=snapshot();S.items=S.items.filter(i=>i.id!==id);save();render();closeSheet();snack(`Removed ${it.name}`,snap)};
- $('#ok').onclick=()=>{const sec=selSec();it.qty=+$('#qty').textContent;tg.usual=+$('#usu').textContent;if(sec!==it.sectionId){it.sectionId=sec;it.order=nextOrder(sec)}tg.sectionId=sec;tg.order=it.order;save();render();closeSheet()}}
+ $('#rm').onclick=()=>{const snap=snapshot(),t=trip();t.items=t.items.filter(x=>x.itemId!==id);save();render();closeSheet();snack(`Removed ${it.name}`,snap)};
+ $('#ok').onclick=()=>{const sec=selSec();e.qty=+$('#qty').textContent;it.usualQty=+$('#usu').textContent;it.turnover=sheet.querySelector('[data-turn][aria-pressed=true]').dataset.turn;if(sec!==p.section)it.stores[st.id]={section:sec,order:nextOrder(sec)};save();render();closeSheet()}}
 function openStores(){const st=store();
- openSheet(`<h3>Stores</h3><div class="menu">${S.stores.map(s=>`<button data-store="${s.id}" aria-current="${s.id===st.id}">${esc(s.name)}</button>`).join('')}<button id="newStore">＋ Add store</button></div><hr>
+ openSheet(`<h3>Stores</h3><div class="menu">${DB.stores.map(s=>`<button data-store="${s.id}" aria-current="${s.id===st.id}">${esc(s.name)}</button>`).join('')}<button id="newStore">＋ Add store</button></div><hr>
  <label class="f" for="sn">Store name</label><input class="t" id="sn" value="${esc(st.name)}">
- <label class="f">Sections in walk order</label><div id="secs">${st.sections.map((s,i)=>`<div class="secrow" data-i="${i}"><input class="t" value="${esc(s.name)}" data-rn="${s.id}" aria-label="Section name"><button class="mini" data-up="${i}" aria-label="Move up">↑</button><button class="mini" data-dn="${i}" aria-label="Move down">↓</button><button class="mini" data-del="${i}" aria-label="Delete section">✕</button></div>`).join('')}</div>
+ <label class="f">Sections in walk order</label><div id="secs">${st.sections.map((s,i)=>`<div class="secrow"><input class="t" value="${esc(s.name)}" data-rn="${s.id}" aria-label="Section name"><button class="mini" data-up="${i}" aria-label="Move up">↑</button><button class="mini" data-dn="${i}" aria-label="Move down">↓</button><button class="mini" data-del="${i}" aria-label="Delete section">✕</button></div>`).join('')}</div>
  <div class="actions" style="justify-content:flex-start"><button class="btn tonal" id="addSec">＋ Section</button></div><hr>
- <div class="actions" style="justify-content:flex-start;margin-top:0"><button class="btn tonal" id="imp">Import / Export JSON</button><button class="btn tonal" id="clr">Clear checked</button>${S.stores.length>1?'<button class="btn danger" id="delStore">Delete store</button>':''}</div>
+ <div class="actions" style="justify-content:flex-start;margin-top:0"><button class="btn tonal" id="imp">Import / Export JSON</button><button class="btn tonal" id="fin">Finish trip</button><button class="btn tonal" id="clr">Clear checked</button>${DB.stores.length>1?'<button class="btn danger" id="delStore">Delete store</button>':''}</div>
  <div class="actions"><button class="btn" id="done">Done</button></div>`);
- const commit=()=>{const v=$('#sn').value.trim();if(v)st.name=v;sheet.querySelectorAll('[data-rn]').forEach(x=>{const s=st.sections.find(z=>z.id===x.dataset.rn);if(s&&x.value.trim())s.name=x.value.trim()});save();render()};
+ const commit=()=>{if(!$('#sn'))return;const v=$('#sn').value.trim();if(v)st.name=v;sheet.querySelectorAll('[data-rn]').forEach(x=>{const s=st.sections.find(z=>z.id===x.dataset.rn);if(s&&x.value.trim())s.name=x.value.trim()});save();render()};
  sheet.onchange=commit;
- sheet.querySelector('.menu').onclick=e=>{const b=e.target.closest('[data-store]');if(b){commit();S.cur=b.dataset.store;expanded.clear();save();render();openStores()}};
- $('#newStore').onclick=()=>{commit();const id=uid();S.stores.push({id,name:'New store',sections:[{id:uid(),name:'Produce',hue:HUES[0]}]});S.cur=id;save();render();openStores();setTimeout(()=>{$('#sn').focus();$('#sn').select()},60)};
+ sheet.querySelector('.menu').onclick=e=>{const b=e.target.closest('[data-store]');if(b){commit();DB.ui.cur=b.dataset.store;expanded.clear();save();render();openStores()}};
+ $('#newStore').onclick=()=>{commit();const id=uid();DB.stores.push({id,name:'New store',sections:[{id:uid(),name:'Produce'}]});DB.ui.cur=id;save();render();openStores();setTimeout(()=>{$('#sn').focus();$('#sn').select()},60)};
  $('#secs').onclick=e=>{const b=e.target.closest('[data-up],[data-dn],[data-del]');if(!b)return;commit();const s=st.sections;
   if(b.dataset.up){const i=+b.dataset.up;if(i>0)[s[i-1],s[i]]=[s[i],s[i-1]]}
   if(b.dataset.dn){const i=+b.dataset.dn;if(i<s.length-1)[s[i+1],s[i]]=[s[i],s[i+1]]}
-  if(b.dataset.del){const i=+b.dataset.del;if(s.length<2)return alert('A store needs at least one section.');const gone=s[i],n=mine().filter(x=>x.sectionId===gone.id).length;
-   if(n&&!confirm(`Move ${n} item(s) from ${gone.name} to ${s[i?0:1].name}?`))return;const tgt=s[i?0:1].id;mine().forEach(x=>{if(x.sectionId===gone.id){x.sectionId=tgt;x.order=nextOrder(tgt)}});Object.values(S.tags).forEach(t=>{if(t.sectionId===gone.id)t.sectionId=tgt});s.splice(i,1)}
+  if(b.dataset.del){const i=+b.dataset.del;if(s.length<2)return alert('A store needs at least one section.');const gone=s[i],tgt=s[i?0:1],moving=DB.items.filter(x=>x.stores[st.id]&&x.stores[st.id].section===gone.id);
+   if(moving.length&&!confirm(`Move ${moving.length} item(s) from ${gone.name} to ${tgt.name}?`))return;moving.forEach(x=>x.stores[st.id]={section:tgt.id,order:nextOrder(tgt.id)});s.splice(i,1)}
   save();render();openStores()};
- $('#addSec').onclick=()=>{commit();const used=new Set(st.sections.map(s=>s.hue));st.sections.push({id:uid(),name:'New section',hue:HUES.find(h=>!used.has(h))??Math.floor(Math.random()*360)});save();render();openStores();const ins=sheet.querySelectorAll('[data-rn]');const l=ins[ins.length-1];l.focus();l.select()};
+ $('#addSec').onclick=()=>{commit();st.sections.push({id:uid(),name:'New section'});save();render();openStores();const ins=sheet.querySelectorAll('[data-rn]');const l=ins[ins.length-1];l.focus();l.select()};
  $('#imp').onclick=()=>{commit();openImport()};
- $('#clr').onclick=()=>{const snap=snapshot();S.items=S.items.filter(i=>!(i.storeId===st.id&&i.checked));save();render();closeSheet();snack('Cleared checked items',snap)};
- const ds=$('#delStore');if(ds)ds.onclick=()=>{if(!confirm(`Delete ${st.name} and its list?`))return;const snap=snapshot();S.stores=S.stores.filter(s=>s.id!==st.id);S.items=S.items.filter(i=>i.storeId!==st.id);S.cur=S.stores[0].id;save();render();closeSheet();snack('Store deleted',snap)};
+ $('#fin').onclick=()=>{commit();closeSheet();if(confirm('Finish this trip and start an empty one?'))finishTrip()};
+ $('#clr').onclick=()=>{const snap=snapshot(),t=trip();t.items=t.items.filter(x=>!x.checkedAt);save();render();closeSheet();snack('Cleared checked items',snap)};
+ const ds=$('#delStore');if(ds)ds.onclick=()=>{if(!confirm(`Delete ${st.name}? Its trips are removed too.`))return;const snap=snapshot();DB.stores=DB.stores.filter(s=>s.id!==st.id);DB.trips=DB.trips.filter(t=>t.storeId!==st.id);DB.items.forEach(i=>delete i.stores[st.id]);DB.ui.cur=DB.stores[0].id;save();render();closeSheet();snack('Store deleted',snap)};
  $('#done').onclick=()=>{commit();closeSheet()}}
-function openImport(){const st=store();
- const exp=JSON.stringify({store:st.name,sections:st.sections.map(s=>s.name),items:mine().sort((a,b)=>a.order-b.order).map(i=>({name:i.name,section:(st.sections.find(s=>s.id===i.sectionId)||{}).name,qty:i.qty,checked:i.checked}))},null,1);
- openSheet(`<h3>Import / Export</h3><p class="sub" style="padding:0">Paste a list to add it to ${esc(st.name)}. Format: <code>{"items":[{"name":"Bananas","section":"Produce","qty":2}]}</code>. A plain array of names, or one name per line, also works. A full backup (Export all) replaces everything.</p>
- <textarea id="ta" placeholder='{"items":[{"name":"Bananas","section":"Produce"}]}'></textarea>
- <div class="actions" style="justify-content:flex-start"><button class="btn" id="doImp">Import</button><button class="btn tonal" id="expL">Export list</button><button class="btn tonal" id="expA">Export all</button><button class="btn tonal" id="file">Load file…</button></div><input type="file" id="fi" accept=".json,.txt,application/json" hidden>
+function openImport(){
+ openSheet(`<h3>Import / Export</h3><p class="hint">Export covers all three objects: stores, items and trips. Importing a full export replaces everything. You can also paste a simple list to add to the active trip: one name per line, a JSON array of names, or <code>{"items":[{"name":"Bananas","section":"Produce","qty":2}]}</code>.</p>
+ <textarea id="ta" placeholder='{"version":2,"stores":[…],"items":[…],"trips":[…]}'></textarea>
+ <div class="actions" style="justify-content:flex-start"><button class="btn" id="doImp">Import</button><button class="btn tonal" id="exp">Export</button><button class="btn tonal" id="dl">Download</button><button class="btn tonal" id="file">Load file…</button></div><input type="file" id="fi" accept=".json,.txt,application/json" hidden>
  <div class="actions"><button class="btn text" id="cx">Close</button></div>`);
- $('#cx').onclick=closeSheet;$('#expL').onclick=()=>{$('#ta').value=exp;$('#ta').select()};$('#expA').onclick=()=>{$('#ta').value=JSON.stringify(S);$('#ta').select()};
+ const dump=()=>JSON.stringify({version:DATA_VERSION,stores:DB.stores,items:DB.items,trips:DB.trips},null,1);
+ $('#cx').onclick=closeSheet;$('#exp').onclick=()=>{$('#ta').value=dump();$('#ta').select();navigator.clipboard&&navigator.clipboard.writeText($('#ta').value).catch(()=>{})};
+ $('#dl').onclick=()=>{const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([dump()],{type:'application/json'}));a.download='shopping-list-'+today()+'.json';a.click()};
  $('#file').onclick=()=>$('#fi').click();$('#fi').onchange=async e=>{const f=e.target.files[0];if(f)$('#ta').value=await f.text()};
- $('#doImp').onclick=()=>{const raw=$('#ta').value.trim();if(!raw)return;let d;try{d=JSON.parse(raw)}catch(e){d=raw.split('\n').map(s=>s.trim()).filter(Boolean)}
-  const snap=snapshot();
-  if(d&&d.stores&&d.items&&d.v){S=d;save();render();closeSheet();snack('Backup restored',snap);return}
-  const arr=Array.isArray(d)?d:(d.items||[]);
-  if(d.sections&&Array.isArray(d.sections))d.sections.forEach(n=>{if(!st.sections.some(s=>s.name.toLowerCase()===String(n).toLowerCase()))st.sections.push({id:uid(),name:String(n),hue:HUES[st.sections.length%HUES.length]})});
-  let n=0;arr.forEach(x=>{const o=typeof x==='string'?{name:x}:x;if(!o||!o.name)return;const name=String(o.name).trim(),k=tkey(name),tg=S.tags[k];
-   let sec=o.section&&st.sections.find(s=>s.name.toLowerCase()===String(o.section).toLowerCase());
-   if(!sec&&o.section){sec={id:uid(),name:String(o.section),hue:HUES[st.sections.length%HUES.length]};st.sections.push(sec)}
-   const sid=sec?sec.id:(tg&&tg.sectionId)||st.sections[0].id,order=nextOrder(sid);
-   S.tags[k]=Object.assign(tg||{usual:1},{name,sectionId:sid,order});S.items.push({id:uid(),storeId:st.id,name,sectionId:sid,qty:Math.max(1,+o.qty||1),checked:!!o.checked,order});n++});
+ $('#doImp').onclick=()=>{const raw=$('#ta').value.trim();if(!raw)return;let d;try{d=JSON.parse(raw)}catch(e){d=null}const snap=snapshot();const st=store();
+  if(d&&Array.isArray(d.stores)&&Array.isArray(d.items)&&Array.isArray(d.trips)){DB={stores:d.stores,items:d.items,trips:d.trips,ui:Object.assign(DB.ui,{cur:d.stores[0]&&d.stores[0].id})};save();render();closeSheet();snack('Imported stores, items and trips',snap);return}
+  const arr=d?(Array.isArray(d)?d:(d.items||[])):parseSpoken(raw);let n=0;
+  arr.forEach(x=>{const o=typeof x==='string'?{name:x}:x;if(!o||!o.name)return;let sec=null;
+   if(o.section){let s=st.sections.find(s=>norm(s.name)===norm(o.section));if(!s){s={id:uid(),name:String(o.section)};st.sections.push(s)}sec=s.id}
+   const it=addToTrip(String(o.name),Math.max(1,+o.qty||1),sec);if(it){if(o.checked){trip().items.find(e=>e.itemId===it.id).checkedAt=new Date().toISOString()}n++}});
   save();render();closeSheet();snack(`Imported ${n} item${n===1?'':'s'}`,snap)}}
 $('#addBtn').onclick=openAdd;$('#storeBtn').onclick=openStores;
-$('#hideBtn').onclick=()=>{S.hide=!S.hide;expanded.clear();save();render()};
-$('#themeBtn').onclick=()=>{S.theme=document.documentElement.dataset.theme==='dark'?'light':'dark';save();theme()};
+$('#hideBtn').onclick=()=>{DB.ui.hide=!DB.ui.hide;expanded.clear();save();render()};
+$('#themeBtn').onclick=()=>{DB.ui.theme=document.documentElement.dataset.theme==='dark'?'light':'dark';save();theme()};
 theme();render();
 if('serviceWorker' in navigator&&location.protocol!=='file:')navigator.serviceWorker.register('sw.js').catch(()=>{});
