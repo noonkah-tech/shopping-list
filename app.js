@@ -1,13 +1,48 @@
 'use strict';
 /* System of record: three JSON objects (stores, items, trips) + ui prefs, each in localStorage. */
-const DATA_VERSION=3,K={v:'shop.version',stores:'shop.stores',items:'shop.items',trips:'shop.trips',ui:'shop.ui'};
+const DATA_VERSION=4,K={v:'shop.version',stores:'shop.stores',items:'shop.items',trips:'shop.trips',ui:'shop.ui'};
 const $=s=>document.querySelector(s),uid=()=>Math.random().toString(36).slice(2,10),today=()=>{const d=new Date();return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0')};
 const esc=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const norm=s=>String(s).trim().toLowerCase().replace(/\s+/g,' ');
+/* South St. George Costco counterclockwise walk. kw routes new items (typing, voice, paste); hint is the optional example line. */
+const COSTCO_LAYOUT=[
+ ['center','Center','Protein shakes, jerky, nuts, register snacks, seasonal, books, gifts, plants, clothing',/\b(protein shakes?|jerky|nuts|trail mix|seasonal|books?|gifts?|plants?|flowers|clothing|shirts?|socks|shoes|gum|candy bars?)\b/i],
+ ['electronics','Electronics','TVs, laptops, phones, headphones',/\b(tv|television|laptop|tablet|ipad|phone|headphones|earbuds|camera|printer|ink|monitor|electronics?|charger|cables?|batteries for)\b/i],
+ ['home-kitchen','Home & kitchen','Hardware, fans, lights, compressors, bikes, blenders, microwaves, plates, pots, Tupperware',/\b(hardware|tools?|ceiling fans?|fans?|lights?|bulbs|lamps?|air compressors?|bikes?|bicycles?|blenders?|microwaves?|toasters?|silverware|utensils|pots|pans|tupperware|containers|knives|kitchen)\b/i],
+ ['bedding-bath','Bedding & bath','Pillows, blankets, floor mats, towels',/\b(pillows?|blankets?|sheets|comforters?|floor mats?|mats?|towels?|bath)\b/i],
+ ['outdoor-auto','Outdoor & auto','Camping chairs, motor oil, coolant, batteries, coolers, grills, stud finder',/\b(camping|chairs?|motor oil|oil|coolant|antifreeze|batteries|battery|coolers?|awnings?|grills?|stud finder|tires?|wiper|auto|propane)\b/i],
+ ['produce','Produce','Melons, apples, bananas, pineapple, peaches, mandarins, grapes',/\b(melons?|watermelon|cantaloupe|apples?|bananas?|pineapples?|peaches|peach|mandarins?|oranges?|grapes|avocados?|onions?|potatoes|tomatoes|lemons?|limes?|garlic)\b/i],
+ ['cold-produce','Cold produce','Salad kits, broccoli, spinach, berries, peppers, corn',/\b(salad|lettuce|broccoli|spinach|strawberr\w*|berries|blueberr\w*|raspberr\w*|peppers?|corn|carrots?|celery|cucumbers?|kale|asparagus|mushrooms?)\b/i],
+ ['bakery','Bakery','Muffins, breads, cakes, pizza crust',/\b(muffins?|bread|sourdough|bagels?|croissants?|cakes?|buns|rolls|pies?|pizza crust|cookies)\b/i],
+ ['open-air-coolers','Open air coolers','Meat, seafood, Kevin\u2019s meals, kits, block cheese, pickles, sausages, lunch meat',/\b(ground beef|beef|bison|turkey|chicken(?! wings)|steaks?|tri-?tip|pork|seafood|salmon|shrimp|fish|kevin'?s|curr(y|ies)(?! soup)|carnitas|kits?|block cheese|pickles|sausages?|hot dogs|lunch meat|deli|bacon|salsa|hummus)\b/i],
+ ['breakfast','Breakfast','',/\b(breakfast(?! sandwich)|pancakes?|waffles?|oatmeal|granola)\b/i],
+ ['dairy','Dairy','Eggs, butter, milk, half and half, creamer, cottage cheese, cream',/\b(eggs?|butter|milk|half and half|creamer|cottage cheese|cream|sour cream)\b/i],
+ ['household','Household','Ziploc, pet food, toilet paper, paper towels, plates, soap, detergent',/\b(ziploc|bags|cat food|dog food|litter|toilet paper|paper towels?|paper plates|napkins|dish soap|soap|laundry|detergent|trash bags|cleaner|wipes)\b/i],
+ ['drinks','Drinks','Soda, White Claw, Modelo, juice, coconut water/milk, Poppi, sparkling ice, Gatorade',/\b(soda|white claw|modelo|beer|wine|juices?|coconut water|coconut milk|poppi|sparkling|water|gatorade|body armor|energy drinks?|lyte|coke|pepsi|drinks?)\b/i],
+ ['chips','Chips','Doritos, corn chips, Cheez-Its, chip bags',/\b(chips?|doritos|cheez-?its|pretzels|popcorn|crackers? snack)\b/i],
+ ['glass-door-coolers','Glass-door coolers','Cheese sticks, yogurt, tortillas, kombucha, smoothie mixes',/\b(cheese sticks?|string cheese|yogurt|tortillas?|kombucha|smoothie)\b/i],
+ ['freezer','Freezer','Everything frozen: patties, burritos, ice cream, pizzas, wings, Uncrustables',/\b(frozen|patties|burritos?|shredded cheese|breakfast sandwich\w*|ice cream|dole whips?|popsicles?|outshine|pizzas?|chicken wings|wings|taquitos|mini tacos|uncrustables|fried rice)\b/i],
+ ['coffee-cereal','Coffee & cereal','Coffee, Cocoa Puffs',/\b(coffee|k-?cups|espresso|cereal|cocoa puffs|cheerios)\b/i],
+ ['pantry','Pantry','Canned and jarred goods, crackers, syrup, ramen, rice, brownie mix, gummies',/\b(canned|cans?|jar|tomato sauce|tomato paste|paste|beans|olives|crackers|maple syrup|syrup|ramen|chili|soup|sriracha|rooster|sauce|brownie|mix|rice|pasta|flour|sugar|oil|peanut butter|gummy|gummies|fruit snacks|frollies|chocolate almonds|mayo|ketchup|mustard|spices?)\b/i]];
+/* seed + migration placement for known items (normalized name -> section id) */
+const COSTCO_PLACE={};Object.entries({
+ 'outdoor-auto':['stud finder','sae 5w-30 motor oil','engine coolant'],
+ 'center':['gum'],
+ 'produce':['apples','bananas','peaches','pineapple','mandarin oranges','grapes'],
+ 'cold-produce':['berries','salad pack','caesar salad packs'],
+ 'bakery':['sourdough pizza crust','chocolate muffins'],
+ 'open-air-coolers':['ground beef','pork belly','chicken thighs','tri-tip','lunch meat','jimmy dean sausage','chicken and maple sausage','microwavable bacon','salsa'],
+ 'dairy':['butter','heavy whipping cream'],
+ 'household':['ziploc bags','cat food','paper plates'],
+ 'drinks':['coconut milk','kirkland sparkling ice','kirkland energy drinks','poppi','body armor lyte'],
+ 'chips':['chip bags','cheez-its'],
+ 'freezer':['chicken wings','breakfast sandwiches','dole whips','outshine popsicles','uncrustables','frozen hamburger patties','taquitos','mini tacos','fried rice','vanilla ice cream','frozen pizzas'],
+ 'coffee-cereal':['cocoa puffs'],
+ 'pantry':['maple syrup','gummy bears','fruit snacks','frollies','chocolate almonds','red rooster sauce','eatiful yellow curry soup packets','mayo','chili','ramen','sticky white rice','ghirardelli brownie mix','canned chicken breast']}).forEach(([k,l])=>l.forEach(n=>COSTCO_PLACE[n]=k));
 /* ---------- seed ---------- */
 function seed(){
  const SID='costco-desert-color',sec=['Produce','Bakery','Open air coolers','Drinks','Freezer','Dry goods'],sid=n=>n.toLowerCase().replace(/\s+/g,'-');
- const stores=[{id:SID,name:'South St. George Costco (Desert Color)',sections:sec.map(n=>({id:sid(n),name:n}))}];
+ const stores=[{id:SID,name:'South St. George Costco (Desert Color)',sections:COSTCO_LAYOUT.map(([id,name,hint])=>({id,name,hint}))}];
  // [name, section, aliases]
  const CAT=[['Apples','Produce'],['Bananas','Produce'],['Berries','Produce'],['Grapes','Produce'],['Salad pack','Produce',['salad']],['Caesar salad packs','Produce'],['Peaches','Produce'],['Pineapple','Produce'],['Mandarin oranges','Produce'],
  ['Sourdough pizza crust','Bakery'],['Chocolate muffins','Bakery'],
@@ -16,7 +51,7 @@ function seed(){
  ['Jimmy Dean sausage','Open air coolers'],['Chicken and maple sausage','Open air coolers'],['Ground beef','Open air coolers'],['Pork belly','Open air coolers'],['Chicken thighs','Open air coolers'],['Tri-tip','Open air coolers'],['Lunch meat','Open air coolers'],['Microwavable bacon','Open air coolers'],['Heavy whipping cream','Open air coolers'],['Butter','Open air coolers'],['Salsa','Open air coolers'],
  ['Maple syrup','Dry goods'],['Gummy bears','Dry goods'],['Fruit snacks','Dry goods'],['Red rooster sauce','Dry goods'],['Eatiful yellow curry soup packets','Dry goods'],['Mayo','Dry goods'],['Chili','Dry goods'],['Ramen','Dry goods'],['Cheez-Its','Dry goods'],['Chocolate almonds','Dry goods'],['Cocoa Puffs','Dry goods'],['Chip bags','Dry goods'],['Sticky white rice','Dry goods',['sticky rice']],['Ghirardelli brownie mix','Dry goods'],['Canned chicken breast','Dry goods'],
  ['Cat food','Dry goods'],['Paper plates','Dry goods'],['Ziploc bags','Dry goods'],['Gum','Dry goods'],['Stud finder','Dry goods'],['SAE 5W-30 motor oil','Dry goods'],['Engine coolant','Dry goods']];
- const ord={};const items=CAT.map(([name,s,al])=>{const k=sid(s);ord[k]=(ord[k]||0);return{id:'i-'+sid(name).replace(/[^a-z0-9-]/g,''),name,aliases:al||[],stores:{[SID]:{section:k,order:ord[k]++}},usualQty:1,turnover:'auto',inStock:null}});
+ const ord={};const items=CAT.map(([name,s,al])=>{const k=COSTCO_PLACE[norm(name)];if(!k)throw Error('no place '+name);ord[k]=(ord[k]||0);return{id:'i-'+sid(name).replace(/[^a-z0-9-]/g,''),name,aliases:al||[],stores:{[SID]:{section:k,order:ord[k]++}},usualQty:1,turnover:'auto',inStock:null}});
  const find=n=>items.find(i=>norm(i.name)===norm(n)||i.aliases.includes(norm(n)));
  items.find(i=>i.name==='Mayo').turnover='low';
  ['Frollies','Uncrustables','breakfast sandwiches','cat food','gum','Ziploc bags','sticky white rice','chip bags','fruit snacks','lunch meat','fried rice','chicken and maple sausage','ice cream','ground beef','paper plates'].forEach(n=>find(n).inStock='2026-10-12');
@@ -29,16 +64,12 @@ function seed(){
  trips.push({id:'t-2026-10-12',storeId:SID,date:'2026-10-12',active:true,items:['Apples','Bananas','Berries','Grapes','Salad pack','Sourdough pizza crust','Coconut milk','Kirkland sparkling ice','Chicken wings','Maple syrup','Gummy bears'].map(n=>({itemId:find(n).id,qty:1,checkedAt:null}))});
  return{stores,items,trips,ui:{cur:SID,hide:false,theme:null}};
 }
-/* keyword map: routes new (unknown) items from typing, voice and paste to a section by name */
-const KEYWORDS=[
- ['Freezer',/\b(frozen|ice cream|popsicles?|dole whips?|outshine|uncrustables|taquitos|mini tacos|fried rice|burritos?|hamburger patties|patties|shredded cheese|breakfast sandwich|pizzas?|chicken wings|wings)\b/i],
- ['Open air coolers',/\b(ground beef|beef|steaks?|tri-?tip|pork|pork belly|chicken breasts?|chicken thighs?|turkey|seafood|salmon|shrimp|fish|lunch meat|deli|sausage|bacon|kits?|chicken salad|fajita|taco kit|butter|cream|salsa|hummus|eggs?|milk(?! chocolate)|cheese|yogurt)\b/i],
- ['Produce',/\b(apples?|bananas?|berries|strawberr|blueberr|grapes|salad|lettuce|spinach|avocados?|peaches|pineapple|oranges?|mandarins?|lemons?|limes?|onions?|potatoes|tomatoes|peppers|carrots|cucumbers?|broccoli|fruit(?! snacks))\b/i],
- ['Bakery',/\b(bread|sourdough|bagels?|muffins?|croissants?|buns|rolls|tortillas|cake|cookies|pizza crust)\b/i],
- ['Drinks',/\b(water|sparkling|soda|juice|coffee|tea|energy drinks?|poppi|body armor|coconut milk|drinks?|lyte|gatorade|kombucha)\b/i]];
-function guessSection(name,st=store()){if(/coconut milk/i.test(name)){const d=st.sections.find(s=>norm(s.name)==='drinks');if(d)return d.id}
- for(const [sec,re] of KEYWORDS)if(re.test(name)){const s=st.sections.find(x=>norm(x.name)===norm(sec));if(s)return s.id}
- const d=st.sections.find(s=>norm(s.name)==='dry goods');return d?d.id:null}
+/* keyword map: routes unknown items to a section; uses the Costco layout kw by section id or name, then falls back to the last pantry-like section */
+function guessSection(name,st=store()){const has=id=>st.sections.find(s=>s.id===id)||null;
+ if(/coconut milk/i.test(name)){const d=has('drinks')||st.sections.find(s=>norm(s.name)==='drinks');if(d)return d.id}
+ const pri=/\bfrozen\b/i.test(name)?['freezer']:/paper towels?|toilet paper|paper plates/i.test(name)?['household']:[];
+ for(const [id,nm,,re] of [...COSTCO_LAYOUT.filter(x=>pri.includes(x[0])),...COSTCO_LAYOUT])if(pri.includes(id)||re.test(name)){const s=has(id)||st.sections.find(x=>norm(x.name)===norm(nm));if(s)return s.id}
+ const d=st.sections.find(s=>['pantry','dry goods'].includes(norm(s.name)));return d?d.id:null}
 /* v2 -> v3: add Open air coolers after Bakery and re-section items; trips and checks untouched */
 function migrate(d,from){if(from<3){const st=d.stores.find(s=>s.id==='costco-desert-color');if(st){
   let oac=st.sections.find(s=>norm(s.name)==='open air coolers');if(!oac){oac={id:'open-air-coolers',name:'Open air coolers'};const bi=st.sections.findIndex(s=>s.id==='bakery');st.sections.splice(bi>=0?bi+1:st.sections.length,0,oac)}
@@ -47,6 +78,18 @@ function migrate(d,from){if(from<3){const st=d.stores.find(s=>s.id==='costco-des
   const toFZ=['frozen hamburger patties','breakfast sandwiches','vanilla ice cream','dole whips','outshine popsicles','frozen pizzas','chicken wings','taquitos','mini tacos','uncrustables','fried rice'];
   const put=(it,sec)=>{let m=-1;d.items.forEach(i=>{const p=i.stores[st.id];if(p&&p.section===sec)m=Math.max(m,p.order)});it.stores[st.id]={section:sec,order:m+1}};
   d.items.forEach(it=>{const n=norm(it.name);if(toOAC.includes(n)&&(!it.stores[st.id]||it.stores[st.id].section!==oac.id))put(it,oac.id);else if(fz&&toFZ.includes(n)&&(!it.stores[st.id]||it.stores[st.id].section!==fz.id))put(it,fz.id)})}}
+ if(from<4){const st=d.stores.find(s=>s.id==='costco-desert-color');if(st){
+  const old=st.sections,ids=new Set(COSTCO_LAYOUT.map(x=>x[0]));
+  st.sections=COSTCO_LAYOUT.map(([id,name,hint])=>({id,name,hint}));
+  const keep=old.filter(o=>!ids.has(o.id)&&!['produce','bakery','open air coolers','drinks','freezer','dry goods'].includes(norm(o.name)));
+  const ord={};const put=(it,sec)=>{ord[sec]=(ord[sec]||0);it.stores[st.id]={section:sec,order:ord[sec]++}};
+  // known items by table, others by keyword; user-made unlisted sections kept only if still used
+  const used=new Set();d.items.slice().sort((a,b)=>((a.stores[st.id]||{}).order||0)-((b.stores[st.id]||{}).order||0)).forEach(it=>{const p=it.stores[st.id];if(!p)return;
+   const k=COSTCO_PLACE[norm(it.name)];if(k)return put(it,k);
+   if(keep.some(o=>o.id===p.section)){used.add(p.section);return put(it,p.section)}
+   if(ids.has(p.section)&&!['produce','bakery','open-air-coolers','drinks','freezer'].includes(p.section))return put(it,p.section);
+   const g=guessSection(it.name,st)||'pantry';put(it,g)});
+  keep.filter(o=>used.has(o.id)).forEach(o=>st.sections.push(o))}}
  return d}
 /* ---------- load / save ---------- */
 let DB;
@@ -87,7 +130,7 @@ function render(){
   const all=rows.filter(x=>x.p.section===sec.id).sort((a,b)=>a.p.order-b.p.order),un=all.filter(x=>!x.e.checkedAt),ch=all.filter(x=>x.e.checkedAt);
   const open=!DB.ui.hide||expanded.has(sec.id);let h=un.map(row).join('');
   if(ch.length){if(DB.ui.hide)h+=`<button class="tri${open?' open':''}" data-tri="${sec.id}" aria-expanded="${open}"><b>▶</b>${ch.length} checked</button>`;if(open)h+=ch.map(row).join('')}
-  if(!all.length)h=`<div class="emptysec">Nothing here yet</div>`;
+  if(!all.length)return "";
   return `<section class="card" data-sec="${sec.id}"><div class="chead"><h2>${esc(sec.name)}</h2><span class="n">${un.length} left</span></div>${h}</section>`}).join('');
  L.innerHTML=(M?'':`<div class="empty"><h2>Your list is empty</h2><p>Add what you need at ${esc(st.name)}, or pick from your usuals. Items land in their section in walk order.</p><div class="actions" style="justify-content:center"><button class="btn" data-a="add">Add item</button><button class="btn tonal" data-a="import">Import JSON</button></div></div>`)+cards+(M?`<div class="finish"><button class="btn tonal" data-a="finish">Finish trip</button></div>`:'');
 }
@@ -172,7 +215,7 @@ function openEdit(id){const st=store(),it=item(id),e=trip().items.find(x=>x.item
 function openStores(){const st=store();
  openSheet(`<h3>Stores</h3><div class="menu">${DB.stores.map(s=>`<button data-store="${s.id}" aria-current="${s.id===st.id}">${esc(s.name)}</button>`).join('')}<button id="newStore">＋ Add store</button></div><hr>
  <label class="f" for="sn">Store name</label><input class="t" id="sn" value="${esc(st.name)}">
- <label class="f">Sections in walk order</label><div id="secs">${st.sections.map((s,i)=>`<div class="secrow"><input class="t" value="${esc(s.name)}" data-rn="${s.id}" aria-label="Section name"><button class="mini" data-up="${i}" aria-label="Move up">↑</button><button class="mini" data-dn="${i}" aria-label="Move down">↓</button><button class="mini" data-del="${i}" aria-label="Delete section">✕</button></div>`).join('')}</div>
+ <label class="f">Sections in walk order</label><div id="secs">${st.sections.map((s,i)=>`<div class="secrow"><input class="t" value="${esc(s.name)}" data-rn="${s.id}" aria-label="Section name" title="${esc(s.hint||'')}"><button class="mini" data-up="${i}" aria-label="Move up">↑</button><button class="mini" data-dn="${i}" aria-label="Move down">↓</button><button class="mini" data-del="${i}" aria-label="Delete section">✕</button></div>`).join('')}</div>
  <div class="actions" style="justify-content:flex-start"><button class="btn tonal" id="addSec">＋ Section</button></div><hr>
  <div class="actions" style="justify-content:flex-start;margin-top:0"><button class="btn tonal" id="imp">Import / Export JSON</button><button class="btn tonal" id="fin">Finish trip</button><button class="btn tonal" id="clr">Clear checked</button>${DB.stores.length>1?'<button class="btn danger" id="delStore">Delete store</button>':''}</div>
  <div class="actions"><button class="btn" id="done">Done</button></div>`);
